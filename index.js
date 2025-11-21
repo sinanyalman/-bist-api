@@ -7,127 +7,110 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// --- LOGO KAYNAKLARI (EN SAĞLAM LİNKLER) ---
-const LOGO_BASE = {
-    AK: 'https://www.akportfoy.com.tr/assets/img/header/logo.png', // Ak Portföy
-    YKB: 'https://www.ykyatirim.com.tr/assets/images/logo.png', // Yapı Kredi
-    GAR: 'https://www.garantibbva.com.tr/assets/images/logo.png', // Garanti
-    IS: 'https://www.isportfoy.com.tr/assets/images/logo.png', // İş Portföy
-    ZIR: 'https://www.ziraatportfoy.com.tr/assets/images/logo.png', // Ziraat
-    DEN: 'https://www.denizportfoy.com.tr/assets/images/logo.png', // Deniz
-    TEB: 'https://www.tebportfoy.com.tr/assets/images/logo.png', // TEB
-    HSB: 'https://www.hsbc.com.tr/assets/images/logo.png', // HSBC
-    QNB: 'https://www.qnbfinansportfoy.com/assets/images/logo.png', // QNB
-    TAC: 'https://www.tacirler.com.tr/images/logo.png', // Tacirler
-    MRM: 'https://marmaracapital.com.tr/wp-content/uploads/2020/03/marmara-capital-logo.png', // Marmara
-    HED: 'https://www.hedefportfoy.com.tr/images/logo.png', // Hedef
-    KUV: 'https://www.kuveytturk.com.tr/assets/img/logo.png' // Kuveyt Türk
+// --- FON LOGOLARI (Manuel Eşleştirme) ---
+const FUND_LOGOS = {
+    'A': 'https://www.akportfoy.com.tr/assets/img/header/logo.png', // Ak
+    'Y': 'https://www.ykyatirim.com.tr/assets/images/logo.png', // Yapı Kredi
+    'G': 'https://www.garantibbva.com.tr/assets/images/logo.png', // Garanti
+    'T': 'https://www.isportfoy.com.tr/assets/images/logo.png', // İş / Tacirler
+    'M': 'https://marmaracapital.com.tr/wp-content/uploads/2020/03/marmara-capital-logo.png', // Marmara
+    'H': 'https://www.hedefportfoy.com.tr/images/logo.png', // Hedef
+    'I': 'https://www.isportfoy.com.tr/assets/images/logo.png', // İstanbul
+    'Z': 'https://www.ziraatportfoy.com.tr/assets/images/logo.png', // Ziraat
+    'O': 'https://www.oyakportfoy.com.tr/assets/images/logo.png', // Oyak
+    'Q': 'https://www.qnbfinansportfoy.com/assets/images/logo.png', // QNB
+    'D': 'https://www.denizportfoy.com.tr/assets/images/logo.png' // Deniz
 };
 
-// Fon Koduna Göre Logo Eşleştirici
-const getFundLogo = (code) => {
-    if (!code) return null;
-    // Fon kodları genelde 3 harflidir. İlk harf veya bilinen kodlardan yakalayacağız.
-    if (code.startsWith('A')) return LOGO_BASE.AK;
-    if (code.startsWith('Y')) return LOGO_BASE.YKB;
-    if (code.startsWith('G')) return LOGO_BASE.GAR;
-    if (code.startsWith('T') && code !== 'TCD') return LOGO_BASE.IS; // TCD hariç T'ler genelde İş veya TEB karışık
-    if (code === 'TCD') return LOGO_BASE.TAC;
-    if (code === 'MAC') return LOGO_BASE.MRM;
-    if (code.startsWith('Z')) return LOGO_BASE.ZIR;
-    if (code.startsWith('D')) return LOGO_BASE.DEN;
-    if (code.startsWith('H')) return LOGO_BASE.HED;
-    if (code.startsWith('K')) return LOGO_BASE.KUV;
-    return null;
-};
-
-// TradingView Logo Dönüştürücü
-const getTvLogo = (logoid) => {
+const getLogoUrl = (logoid) => {
     if (!logoid) return null;
-    return `https://images.weserv.nl/?url=s3-symbol-logo.tradingview.com/${logoid}.svg&w=64&h=64&output=png&q=80`;
+    try { return `https://images.weserv.nl/?url=s3-symbol-logo.tradingview.com/${logoid}.svg&w=64&h=64&output=png&q=80`; } catch (e) { return null; }
+};
+
+const getFundLogo = (symbol) => {
+    if(!symbol) return null;
+    // Özel Fonlar
+    if(symbol === 'TCD') return 'https://www.tacirler.com.tr/images/logo.png';
+    if(symbol === 'MAC') return 'https://marmaracapital.com.tr/wp-content/uploads/2020/03/marmara-capital-logo.png';
+    // Genel Banka Logoları
+    return FUND_LOGOS[symbol.charAt(0)] || null;
 };
 
 // =====================================================
-// 1. TEFAS FONLARI (KORUMALI İSTEK)
+// 1. TÜM TÜRKİYE PİYASASI (TEK İSTEK - 3000 VARLIK)
 // =====================================================
-async function getTefasFunds() {
-    try {
-        // İş Yatırım bazen robotları engeller. Tarayıcı gibi davranıyoruz.
-        const url = 'https://www.isyatirim.com.tr/_layouts/15/IsYatirim.Website/Common/Data.aspx/YatirimFonlari';
-        
-        const { data } = await axios.get(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Referer': 'https://www.isyatirim.com.tr/tr-tr/analiz/fon/Sayfalar/default.aspx'
-            }
-        });
-        
-        // Veri geldi mi kontrol et
-        if (!data || !data.data) {
-            console.log("TEFAS verisi boş geldi.");
-            return [];
-        }
-
-        return data.data.map(item => ({
-            id: item[0],            
-            symbol: item[0],        
-            name: item[1],          
-            price: item[2],         
-            change24h: item[3],     
-            high24: item[2],        
-            low24: item[2],
-            mcap: 0,
-            type: 'fund',           
-            region: 'TR',
-            color: '#8E44AD',       
-            icon: 'chart-pie',
-            image: getFundLogo(item[0]) // Manuel eşleştirdiğimiz logolar
-        }));
-
-    } catch (error) {
-        console.error("TEFAS Çekme Hatası:", error.message);
-        return [];
-    }
-}
-
-// =====================================================
-// 2. TRADINGVIEW VERİLERİ
-// =====================================================
-
-async function getBistStocks() {
+async function getAllTurkeyAssets() {
     try {
         const url = 'https://scanner.tradingview.com/turkey/scan';
         const body = {
-            "filter": [
-                { "left": "exchange", "operation": "equal", "right": "BIST" },
-                { "left": "type", "operation": "equal", "right": "stock" },
-                { "left": "subtype", "operation": "equal", "right": "common" }
-            ],
+            "filter": [{ "left": "exchange", "operation": "equal", "right": "BIST" }],
             "options": { "lang": "tr" },
-            "columns": ["name", "close", "change", "high", "low", "description", "logoid", "market_cap_basic"],
-            "sort": { "sortBy": "volume", "sortOrder": "desc" }, // Hacme göre en popülerleri al
-            "range": [0, 600]
+            "symbols": { "query": { "types": [] }, "tickers": [] },
+            // subtype, type ve description alanlarını kullanarak ayrıştıracağız
+            "columns": ["name", "close", "change", "high", "low", "description", "type", "subtype", "logoid", "market_cap_basic"],
+            "sort": { "sortBy": "name", "sortOrder": "asc" },
+            "range": [0, 3000] // LİMİTİ SONUNA KADAR AÇTIK
         };
 
-        const { data } = await axios.post(url, body, { timeout: 15000 });
-        if (!data || !data.data) return [];
+        const { data } = await axios.post(url, body, { timeout: 20000 }); // Timeout'u artırdık
+        
+        let stocks = [];
+        let funds = [];
 
-        return data.data.map(item => {
-            // Logo varsa al, yoksa null dön (Telefondaki harf kutusu devreye girsin)
-            const logoUrl = item.d[6] ? getTvLogo(item.d[6]) : null;
+        if (data && data.data) {
+            data.data.forEach(item => {
+                const d = item.d;
+                const symbol = d[0];
+                const type = d[6];
+                const subtype = d[7];
+                const desc = d[5] || "";
 
-            return {
-                id: item.d[0], symbol: item.d[0], name: item.d[5],
-                price: item.d[1] || 0, change24h: item.d[2] || 0, 
-                high24: item.d[3] || item.d[1], low24: item.d[4] || item.d[1], 
-                mcap: item.d[7] || 0, 
-                image: logoUrl,
-                type: 'stock', icon: 'finance', color: '#34495E', region: 'TR'
-            };
-        });
-    } catch (error) { return []; }
+                const asset = {
+                    id: symbol,
+                    symbol: symbol,
+                    name: d[5],
+                    price: d[1] || 0,
+                    change24h: d[2] || 0,
+                    high24: d[3] || d[1],
+                    low24: d[4] || d[1],
+                    mcap: d[9] || 0,
+                    region: 'TR'
+                };
+
+                // --- AYRIŞTIRMA MANTIĞI ---
+                
+                // 1. HİSSE SENETLERİ
+                if (type === 'stock' && subtype === 'common') {
+                    asset.type = 'stock';
+                    asset.icon = 'finance';
+                    asset.color = '#34495E';
+                    asset.image = getLogoUrl(d[8]);
+                    stocks.push(asset);
+                } 
+                // 2. FONLAR (TEFAS)
+                // Fonlar genelde 3 harflidir (örn: MAC, TCD) VE type='fund' veya subtype='mutual' olur.
+                // Ayrıca açıklamada "FON" kelimesi geçer.
+                else if (
+                    (type === 'fund' || subtype === 'mutual' || subtype === 'etf') || 
+                    (symbol.length === 3 && desc.includes('FON')) 
+                ) {
+                    asset.type = 'fund';
+                    asset.icon = 'chart-pie';
+                    asset.color = '#8E44AD';
+                    asset.image = getFundLogo(symbol); // Fon logosu ata
+                    funds.push(asset);
+                }
+            });
+        }
+        return { stocks, funds };
+
+    } catch (error) {
+        console.error("Türkiye Verisi Hatası:", error.message);
+        return { stocks: [], funds: [] };
+    }
 }
 
+// --- ABD HİSSELERİ ---
 async function getUSAssets() {
     try {
         const url = 'https://scanner.tradingview.com/america/scan';
@@ -147,21 +130,19 @@ async function getUSAssets() {
 
         return data.data.map(item => {
             const isEtf = item.d[7] === 'fund' || item.d[7] === 'structured';
-            const logoUrl = item.d[8] ? getTvLogo(item.d[8]) : null;
-
             return {
                 id: item.d[0], symbol: item.d[0].split(':')[1], name: item.d[5],
                 type: isEtf ? 'etf-us' : 'stock-us', region: 'US',
                 price: item.d[1] || 0, change24h: item.d[2] || 0, 
                 high24: item.d[3] || item.d[1], low24: item.d[4] || item.d[1], 
-                mcap: item.d[6] || 0, 
-                image: logoUrl,
+                mcap: item.d[6] || 0, image: getLogoUrl(item.d[8]),
                 icon: isEtf ? 'layers' : 'google-circles-extended', color: isEtf ? '#E67E22' : '#2980B9'
             };
         });
     } catch (error) { return []; }
 }
 
+// --- DÖVİZ VE ALTIN ---
 async function getForexAndGold() {
     try {
         const url = 'https://scanner.tradingview.com/global/scan';
@@ -196,27 +177,19 @@ async function getForexAndGold() {
 app.get('/api/all', async (req, res) => {
     try {
         console.log("Veriler isteniyor...");
-        
-        // Promise.allSettled kullanarak biri hata verse bile diğerlerini getir
-        const results = await Promise.allSettled([
-            getTefasFunds(),
-            getBistStocks(),
+        const [turkeyAssets, us, global] = await Promise.all([
+            getAllTurkeyAssets(),
             getUSAssets(),
             getForexAndGold()
         ]);
+        
+        // Türkiye verisini Hisse ve Fon olarak ayırıp birleştiriyoruz
+        const { stocks, funds } = turkeyAssets;
+        console.log(`Hisse: ${stocks.length}, Fon: ${funds.length}`);
 
-        // Başarılı olanları al
-        const tefas = results[0].status === 'fulfilled' ? results[0].value : [];
-        const stocks = results[1].status === 'fulfilled' ? results[1].value : [];
-        const us = results[2].status === 'fulfilled' ? results[2].value : [];
-        const global = results[3].status === 'fulfilled' ? results[3].value : [];
-
-        console.log(`Fon: ${tefas.length}, Hisse: ${stocks.length}, ABD: ${us.length}`);
-
-        res.json([...global, ...tefas, ...stocks, ...us]);
-
+        res.json([...global, ...stocks, ...funds, ...us]);
     } catch (error) {
-        console.error("Sunucu Hatası:", error);
+        console.error("API Hatası:", error);
         res.status(500).json({ error: "Sunucu hatasi" });
     }
 });
