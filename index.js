@@ -7,20 +7,27 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// --- 1. TÜM TÜRKİYE PİYASASI (HİSSE + FONLAR) ---
-// Hepsini tek seferde çekip burada ayıklayacağız.
+// Resim Dönüştürücü Fonksiyonu (SVG -> PNG)
+const getLogoUrl = (logoid) => {
+    if (!logoid) return null;
+    // TradingView SVG linki
+    const originalUrl = `s3-symbol-logo.tradingview.com/${logoid}.svg`;
+    // Weserv servisi ile PNG'ye çeviriyoruz
+    return `https://images.weserv.nl/?url=${originalUrl}&w=64&h=64&output=png&q=80`;
+};
+
+// --- 1. TÜM TÜRKİYE PİYASASI ---
 async function getTurkeyAssets() {
     try {
         const url = 'https://scanner.tradingview.com/turkey/scan';
         const body = {
-            "filter": [
-                { "left": "exchange", "operation": "equal", "right": "BIST" }
-            ],
+            "filter": [{ "left": "exchange", "operation": "equal", "right": "BIST" }],
             "options": { "lang": "tr" },
             "symbols": { "query": { "types": [] }, "tickers": [] },
-            "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description", "type", "subtype"],
+            // logoid sütununu ekledik (d[8])
+            "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description", "type", "subtype", "logoid"],
             "sort": { "sortBy": "name", "sortOrder": "asc" },
-            "range": [0, 2000] // Limiti 2000 yaptık, ne var ne yok gelecek
+            "range": [0, 2000]
         };
 
         const { data } = await axios.post(url, body);
@@ -29,10 +36,10 @@ async function getTurkeyAssets() {
         let funds = [];
 
         data.data.forEach(item => {
-            const type = item.d[6]; // type kolonu
-            const subtype = item.d[7]; // subtype kolonu
-            
-            // Veri objesi
+            const type = item.d[6];
+            const subtype = item.d[7];
+            const logoid = item.d[8]; // Logo ID'si
+
             const asset = {
                 id: item.d[0],
                 symbol: item.d[0],
@@ -41,24 +48,21 @@ async function getTurkeyAssets() {
                 change24h: item.d[2],
                 high24: item.d[3],
                 low24: item.d[4],
+                image: getLogoUrl(logoid), // Logoyu oluşturduk
                 region: 'TR'
             };
 
-            // AYRIŞTIRMA MANTIĞI
             if (type === 'stock' && subtype === 'common') {
-                // Hisse Senedi (THYAO, GARAN vb.)
                 asset.type = 'stock';
                 asset.icon = 'finance';
                 asset.color = '#34495E';
                 stocks.push(asset);
             } else if (type === 'fund' || type === 'structured' || subtype === 'etf' || subtype === 'mutual') {
-                // Fonlar (TEFAS, ETF vb.)
                 asset.type = 'fund';
                 asset.icon = 'chart-pie';
                 asset.color = '#8E44AD';
                 funds.push(asset);
             } 
-            // Varantlar ve diğer türev araçları bilerek almıyoruz
         });
 
         return { stocks, funds };
@@ -79,7 +83,8 @@ async function getUSAssets() {
                 { "left": "exchange", "operation": "in_range", "right": ["NASDAQ", "NYSE", "AMEX"] }
             ],
             "options": { "lang": "en" },
-            "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description", "market_cap_basic", "type"],
+            // logoid sütununu ekledik (d[8])
+            "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description", "market_cap_basic", "type", "logoid"],
             "sort": { "sortBy": "market_cap_basic", "sortOrder": "desc" }, 
             "range": [0, 250]
         };
@@ -87,6 +92,7 @@ async function getUSAssets() {
         const { data } = await axios.post(url, body);
         return data.data.map(item => {
             const rawType = item.d[7];
+            const logoid = item.d[8];
             const isEtf = rawType === 'fund' || rawType === 'structured';
             
             return {
@@ -99,6 +105,7 @@ async function getUSAssets() {
                 change24h: item.d[2],
                 high24: item.d[3],
                 low24: item.d[4],
+                image: getLogoUrl(logoid), // Logoyu oluşturduk
                 icon: isEtf ? 'layers' : 'google-circles-extended',
                 color: isEtf ? '#E67E22' : '#2980B9'
             };
@@ -161,17 +168,13 @@ async function getForexAndGold() {
     }
 }
 
-// --- ENDPOINT: HEPSİ BİR ARADA ---
+// --- ENDPOINT ---
 app.get('/api/all', async (req, res) => {
-    console.log("Tüm varlıklar isteniyor...");
-    
     const [turkeyAssets, us, global] = await Promise.all([
         getTurkeyAssets(),
         getUSAssets(),
         getForexAndGold()
     ]);
-    
-    // Türkiye hisseleri ve fonlarını ayırıp genel listeye ekliyoruz
     res.json([...global, ...turkeyAssets.stocks, ...turkeyAssets.funds, ...us]);
 });
 
