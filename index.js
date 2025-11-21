@@ -7,79 +7,69 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// --- 1. BIST HİSSELERİ (TÜRKİYE) ---
-async function getBistStocks() {
+// --- 1. TÜM TÜRKİYE PİYASASI (HİSSE + FONLAR) ---
+// Hepsini tek seferde çekip burada ayıklayacağız.
+async function getTurkeyAssets() {
     try {
         const url = 'https://scanner.tradingview.com/turkey/scan';
         const body = {
             "filter": [
-                { "left": "exchange", "operation": "equal", "right": "BIST" },
-                { "left": "typespecs", "operation": "has", "right": "common" }
+                { "left": "exchange", "operation": "equal", "right": "BIST" }
             ],
             "options": { "lang": "tr" },
             "symbols": { "query": { "types": [] }, "tickers": [] },
-            "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description"],
+            "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description", "type", "subtype"],
             "sort": { "sortBy": "name", "sortOrder": "asc" },
-            "range": [0, 600]
+            "range": [0, 2000] // Limiti 2000 yaptık, ne var ne yok gelecek
         };
 
         const { data } = await axios.post(url, body);
-        return data.data.map(item => ({
-            id: item.d[0],
-            symbol: item.d[0],
-            name: item.d[5],
-            type: 'stock',
-            region: 'TR',
-            price: item.d[1],
-            change24h: item.d[2],
-            high24: item.d[3],
-            low24: item.d[4],
-            icon: 'finance',
-            color: '#34495E'
-        }));
+        
+        let stocks = [];
+        let funds = [];
+
+        data.data.forEach(item => {
+            const type = item.d[6]; // type kolonu
+            const subtype = item.d[7]; // subtype kolonu
+            
+            // Veri objesi
+            const asset = {
+                id: item.d[0],
+                symbol: item.d[0],
+                name: item.d[5],
+                price: item.d[1],
+                change24h: item.d[2],
+                high24: item.d[3],
+                low24: item.d[4],
+                region: 'TR'
+            };
+
+            // AYRIŞTIRMA MANTIĞI
+            if (type === 'stock' && subtype === 'common') {
+                // Hisse Senedi (THYAO, GARAN vb.)
+                asset.type = 'stock';
+                asset.icon = 'finance';
+                asset.color = '#34495E';
+                stocks.push(asset);
+            } else if (type === 'fund' || type === 'structured' || subtype === 'etf' || subtype === 'mutual') {
+                // Fonlar (TEFAS, ETF vb.)
+                asset.type = 'fund';
+                asset.icon = 'chart-pie';
+                asset.color = '#8E44AD';
+                funds.push(asset);
+            } 
+            // Varantlar ve diğer türev araçları bilerek almıyoruz
+        });
+
+        return { stocks, funds };
+
     } catch (error) {
-        console.error("BIST Hatası:", error.message);
-        return [];
+        console.error("Türkiye Piyasası Hatası:", error.message);
+        return { stocks: [], funds: [] };
     }
 }
 
-// --- 2. TEFAS FONLARI (DÜZELTİLDİ) ---
-async function getTefasFunds() {
-    try {
-        const url = 'https://scanner.tradingview.com/turkey/scan';
-        const body = {
-            "filter": [
-                { "left": "exchange", "operation": "equal", "right": "BIST" },
-                { "left": "type", "operation": "equal", "right": "fund" } // Sadece Fonlar
-            ],
-            "options": { "lang": "tr" },
-            "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description"],
-            // HATA BURADAYDI: 'total_assets' yerine 'name' ile sıralıyoruz.
-            "sort": { "sortBy": "name", "sortOrder": "asc" }, 
-            "range": [0, 300] // Sayıyı artırdık
-        };
-
-        const { data } = await axios.post(url, body);
-        return data.data.map(item => ({
-            id: item.d[0],
-            symbol: item.d[0], // Örn: MAC, TCD
-            name: item.d[5],   // Fonun uzun adı
-            type: 'fund',
-            region: 'TR',
-            price: item.d[1],
-            change24h: item.d[2],
-            high24: item.d[3],
-            low24: item.d[4],
-            icon: 'chart-pie',
-            color: '#8E44AD'
-        }));
-    } catch (error) {
-        console.error("TEFAS Hatası:", error.message);
-        return [];
-    }
-}
-
-// --- 3. ABD HİSSELERİ VE ETF'ler ---
+// --- 2. ABD HİSSELERİ VE ETF'ler ---
 async function getUSAssets() {
     try {
         const url = 'https://scanner.tradingview.com/america/scan';
@@ -91,7 +81,7 @@ async function getUSAssets() {
             "options": { "lang": "en" },
             "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description", "market_cap_basic", "type"],
             "sort": { "sortBy": "market_cap_basic", "sortOrder": "desc" }, 
-            "range": [0, 200]
+            "range": [0, 250]
         };
 
         const { data } = await axios.post(url, body);
@@ -119,7 +109,7 @@ async function getUSAssets() {
     }
 }
 
-// --- 4. DÖVİZ VE ALTIN ---
+// --- 3. DÖVİZ VE ALTIN ---
 async function getForexAndGold() {
     try {
         const url = 'https://scanner.tradingview.com/global/scan';
@@ -175,14 +165,14 @@ async function getForexAndGold() {
 app.get('/api/all', async (req, res) => {
     console.log("Tüm varlıklar isteniyor...");
     
-    const [bist, tefas, us, global] = await Promise.all([
-        getBistStocks(),
-        getTefasFunds(),
+    const [turkeyAssets, us, global] = await Promise.all([
+        getTurkeyAssets(),
         getUSAssets(),
         getForexAndGold()
     ]);
     
-    res.json([...global, ...bist, ...tefas, ...us]);
+    // Türkiye hisseleri ve fonlarını ayırıp genel listeye ekliyoruz
+    res.json([...global, ...turkeyAssets.stocks, ...turkeyAssets.funds, ...us]);
 });
 
 app.listen(PORT, () => {
