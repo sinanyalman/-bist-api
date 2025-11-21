@@ -17,7 +17,7 @@ const getLogoUrl = (logoid) => {
     }
 };
 
-// --- 1. TÜM TÜRKİYE PİYASASI (DÜZELTİLDİ) ---
+// --- 1. TÜM TÜRKİYE PİYASASI (KESİN ÇÖZÜM) ---
 async function getTurkeyAssets() {
     try {
         const url = 'https://scanner.tradingview.com/turkey/scan';
@@ -25,14 +25,24 @@ async function getTurkeyAssets() {
             "filter": [{ "left": "exchange", "operation": "equal", "right": "BIST" }],
             "options": { "lang": "tr" },
             "symbols": { "query": { "types": [] }, "tickers": [] },
-            // SÜTUNLARI GÜNCELLEDİK: market_cap_basic (Piyasa Değeri) eklendi
-            // Sırası: [0:sembol, 1:fiyat, 2:değişim, 3:yüksek, 4:düşük, 5:ad, 6:tip, 7:alt_tip, 8:logo, 9:marketcap]
-            "columns": ["name", "close", "change", "high", "low", "description", "type", "subtype", "logoid", "market_cap_basic"],
+            // DİKKAT: Sütunlara "|1d" ekledik. Bu "1 Günlük Veri" demektir.
+            "columns": [
+                "name",             // d[0]
+                "close",            // d[1]
+                "change|1d",        // d[2] (Yüzde Değişim)
+                "high|1d",          // d[3] (Günün En Yükseği)
+                "low|1d",           // d[4] (Günün En Düşüğü)
+                "description",      // d[5]
+                "type",             // d[6]
+                "subtype",          // d[7]
+                "logoid",           // d[8]
+                "market_cap_basic"  // d[9] (Piyasa Değeri)
+            ],
             "sort": { "sortBy": "name", "sortOrder": "asc" },
             "range": [0, 2000]
         };
 
-        const { data } = await axios.post(url, body, { timeout: 10000 });
+        const { data } = await axios.post(url, body, { timeout: 15000 });
         
         let stocks = [];
         let funds = [];
@@ -40,23 +50,23 @@ async function getTurkeyAssets() {
         if (data && data.data) {
             data.data.forEach(item => {
                 const d = item.d;
-                const type = d[6];
-                const subtype = d[7];
-                const logoid = d[8];
-                const mcap = d[9]; // Piyasa Değeri
-
+                
+                // Verileri güvenli çekelim
                 const asset = {
                     id: d[0],
                     symbol: d[0],
                     name: d[5],
                     price: d[1] || 0,
-                    change24h: d[2] || 0, // Boş gelirse 0 yap
-                    high24: d[3] || d[1], // Yüksek yoksa şu anki fiyatı koy
-                    low24: d[4] || d[1],  // Düşük yoksa şu anki fiyatı koy
-                    mcap: mcap || 0,      // Piyasa değeri
-                    image: getLogoUrl(logoid),
+                    change24h: d[2] || 0, 
+                    high24: d[3] || d[1], // Eğer boş gelirse anlık fiyatı yaz
+                    low24: d[4] || d[1],  // Eğer boş gelirse anlık fiyatı yaz
+                    mcap: d[9] || 0,      // Piyasa değeri
+                    image: getLogoUrl(d[8]),
                     region: 'TR'
                 };
+
+                const type = d[6];
+                const subtype = d[7];
 
                 if (type === 'stock' && subtype === 'common') {
                     asset.type = 'stock';
@@ -89,18 +99,18 @@ async function getUSAssets() {
                 { "left": "exchange", "operation": "in_range", "right": ["NASDAQ", "NYSE", "AMEX"] }
             ],
             "options": { "lang": "en" },
-            "columns": ["name", "close", "change", "high", "low", "description", "market_cap_basic", "type", "logoid"],
+            // ABD için de |1d ekliyoruz
+            "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description", "market_cap_basic", "type", "logoid"],
             "sort": { "sortBy": "market_cap_basic", "sortOrder": "desc" }, 
             "range": [0, 150]
         };
 
-        const { data } = await axios.post(url, body, { timeout: 10000 });
+        const { data } = await axios.post(url, body, { timeout: 15000 });
         if(!data || !data.data) return [];
 
         return data.data.map(item => {
             const d = item.d;
             const rawType = d[7];
-            const logoid = d[8];
             const isEtf = rawType === 'fund' || rawType === 'structured';
             
             return {
@@ -114,7 +124,7 @@ async function getUSAssets() {
                 high24: d[3] || d[1],
                 low24: d[4] || d[1],
                 mcap: d[6] || 0,
-                image: getLogoUrl(logoid),
+                image: getLogoUrl(d[8]),
                 icon: isEtf ? 'layers' : 'google-circles-extended',
                 color: isEtf ? '#E67E22' : '#2980B9'
             };
@@ -134,7 +144,7 @@ async function getForexAndGold() {
                 "tickers": ["FX_IDC:USDTRY", "FX_IDC:EURTRY", "TVC:GOLD"],
                 "query": { "types": [] }
             },
-            "columns": ["close", "change", "high", "low"]
+            "columns": ["close", "change|1d", "high|1d", "low|1d"]
         };
 
         const { data } = await axios.post(url, body, { timeout: 10000 });
@@ -142,7 +152,8 @@ async function getForexAndGold() {
 
         const findVal = (ticker) => {
             const item = data.data.find(i => i.s === ticker);
-            return item ? { price: item.d[0], change: item.d[1], high: item.d[2], low: item.d[3] } : { price:0, change:0 };
+            const d = item ? item.d : [0,0,0,0];
+            return { price: d[0], change: d[1], high: d[2], low: d[3] };
         };
 
         const usd = findVal("FX_IDC:USDTRY");
@@ -157,12 +168,10 @@ async function getForexAndGold() {
             { id: 'XAU', symbol: 'ONS', name: 'Ons Altın', type: 'gold', price: ons.price, change24h: ons.change, high24: ons.high, low24: ons.low, icon: 'gold', color: '#D4AC0D' }
         ];
     } catch (error) {
-        console.error("Forex Hatası:", error.message);
         return [];
     }
 }
 
-// --- ENDPOINT ---
 app.get('/api/all', async (req, res) => {
     try {
         const [turkeyAssets, us, global] = await Promise.all([
@@ -172,11 +181,10 @@ app.get('/api/all', async (req, res) => {
         ]);
         res.json([...global, ...turkeyAssets.stocks, ...turkeyAssets.funds, ...us]);
     } catch (error) {
-        console.error("Genel Sunucu Hatası:", error);
-        res.status(500).json({ error: "Veri cekilemedi" });
+        res.status(500).json({ error: "Veri hatasi" });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`Sunucu çalışıyor! Port: ${PORT}`);
+    console.log(`Sunucu calisiyor: ${PORT}`);
 });
