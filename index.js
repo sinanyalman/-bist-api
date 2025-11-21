@@ -7,97 +7,79 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// --- YARDIMCI: LOGO OLUŞTURUCU ---
-// TradingView SVG logosunu PNG'ye çevirir.
-const getLogoUrl = (logoid, base) => {
+const getLogoUrl = (logoid) => {
     if (!logoid) return null;
     try {
-        // TradingView base URL'i bazen değişebilir, standart olanı kullanıyoruz
-        const originalUrl = `https://s3-symbol-logo.tradingview.com/${logoid}.svg`;
-        // React Native SVG gösteremez, bu yüzden weserv ile PNG'ye çeviriyoruz
-        return `https://images.weserv.nl/?url=${encodeURIComponent(originalUrl)}&w=64&h=64&output=png&q=80&t=square`;
+        const originalUrl = `s3-symbol-logo.tradingview.com/${logoid}.svg`;
+        return `https://images.weserv.nl/?url=${originalUrl}&w=64&h=64&output=png&q=80`;
     } catch (e) {
         return null;
     }
 };
 
-// --- 1. BIST HİSSELERİ (Sadece Hisseler) ---
-async function getBistStocks() {
+// --- 1. TÜM TÜRKİYE PİYASASI (DÜZELTİLDİ) ---
+async function getTurkeyAssets() {
     try {
         const url = 'https://scanner.tradingview.com/turkey/scan';
         const body = {
-            "filter": [
-                { "left": "exchange", "operation": "equal", "right": "BIST" },
-                { "left": "type", "operation": "equal", "right": "stock" }, 
-                { "left": "subtype", "operation": "equal", "right": "common" } 
-            ],
+            "filter": [{ "left": "exchange", "operation": "equal", "right": "BIST" }],
             "options": { "lang": "tr" },
-            // d[6] -> logoid
-            "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description", "logoid"],
+            "symbols": { "query": { "types": [] }, "tickers": [] },
+            // SÜTUNLARI GÜNCELLEDİK: market_cap_basic (Piyasa Değeri) eklendi
+            // Sırası: [0:sembol, 1:fiyat, 2:değişim, 3:yüksek, 4:düşük, 5:ad, 6:tip, 7:alt_tip, 8:logo, 9:marketcap]
+            "columns": ["name", "close", "change", "high", "low", "description", "type", "subtype", "logoid", "market_cap_basic"],
             "sort": { "sortBy": "name", "sortOrder": "asc" },
-            "range": [0, 600] // İlk 600 hisse yeterli
+            "range": [0, 2000]
         };
 
-        const { data } = await axios.post(url, body, { timeout: 8000 });
+        const { data } = await axios.post(url, body, { timeout: 10000 });
         
-        return data.data.map(item => ({
-            id: item.d[0],
-            symbol: item.d[0],
-            name: item.d[5],
-            type: 'stock',
-            region: 'TR',
-            price: item.d[1],
-            change24h: item.d[2],
-            high24: item.d[3],
-            low24: item.d[4],
-            image: getLogoUrl(item.d[6]), // LOGO BURADAN GELİYOR
-            icon: 'finance',
-            color: '#34495E'
-        }));
+        let stocks = [];
+        let funds = [];
+
+        if (data && data.data) {
+            data.data.forEach(item => {
+                const d = item.d;
+                const type = d[6];
+                const subtype = d[7];
+                const logoid = d[8];
+                const mcap = d[9]; // Piyasa Değeri
+
+                const asset = {
+                    id: d[0],
+                    symbol: d[0],
+                    name: d[5],
+                    price: d[1] || 0,
+                    change24h: d[2] || 0, // Boş gelirse 0 yap
+                    high24: d[3] || d[1], // Yüksek yoksa şu anki fiyatı koy
+                    low24: d[4] || d[1],  // Düşük yoksa şu anki fiyatı koy
+                    mcap: mcap || 0,      // Piyasa değeri
+                    image: getLogoUrl(logoid),
+                    region: 'TR'
+                };
+
+                if (type === 'stock' && subtype === 'common') {
+                    asset.type = 'stock';
+                    asset.icon = 'finance';
+                    asset.color = '#34495E';
+                    stocks.push(asset);
+                } else if (type === 'fund' || type === 'structured' || subtype === 'etf' || subtype === 'mutual') {
+                    asset.type = 'fund';
+                    asset.icon = 'chart-pie';
+                    asset.color = '#8E44AD';
+                    funds.push(asset);
+                } 
+            });
+        }
+        return { stocks, funds };
+
     } catch (error) {
-        console.error("BIST Fetch Error:", error.message);
-        return [];
+        console.error("Türkiye Piyasası Hatası:", error.message);
+        return { stocks: [], funds: [] };
     }
 }
 
-// --- 2. TEFAS FONLARI (Sadece Fonlar - Ayrı İstek) ---
-async function getTefasFunds() {
-    try {
-        const url = 'https://scanner.tradingview.com/turkey/scan';
-        const body = {
-            "filter": [
-                { "left": "exchange", "operation": "equal", "right": "BIST" },
-                { "left": "type", "operation": "in_range", "right": ["fund", "mutual"] } // Fon tipleri
-            ],
-            "options": { "lang": "tr" },
-            "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description", "logoid"],
-            "sort": { "sortBy": "name", "sortOrder": "asc" },
-            "range": [0, 500] // 500 tane fon çeker
-        };
-
-        const { data } = await axios.post(url, body, { timeout: 8000 });
-        
-        return data.data.map(item => ({
-            id: item.d[0],
-            symbol: item.d[0], 
-            name: item.d[5],
-            type: 'fund',
-            region: 'TR',
-            price: item.d[1],
-            change24h: item.d[2],
-            high24: item.d[3],
-            low24: item.d[4],
-            image: getLogoUrl(item.d[6]),
-            icon: 'chart-pie',
-            color: '#8E44AD'
-        }));
-    } catch (error) {
-        console.error("Fund Fetch Error:", error.message);
-        return [];
-    }
-}
-
-// --- 3. ABD HİSSELERİ & ETF (En büyük 200) ---
+// --- 2. ABD HİSSELERİ ---
 async function getUSAssets() {
     try {
         const url = 'https://scanner.tradingview.com/america/scan';
@@ -107,41 +89,43 @@ async function getUSAssets() {
                 { "left": "exchange", "operation": "in_range", "right": ["NASDAQ", "NYSE", "AMEX"] }
             ],
             "options": { "lang": "en" },
-            // Market Cap'e göre sırala ki popülerler (Apple, Tesla) gelsin
-            "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description", "type", "logoid", "market_cap_basic"],
+            "columns": ["name", "close", "change", "high", "low", "description", "market_cap_basic", "type", "logoid"],
             "sort": { "sortBy": "market_cap_basic", "sortOrder": "desc" }, 
-            "range": [0, 200]
+            "range": [0, 150]
         };
 
-        const { data } = await axios.post(url, body, { timeout: 8000 });
-        
-        return data.data.map(item => {
-            const rawType = item.d[6];
-            const isEtf = rawType === 'fund' || rawType === 'structured';
-            const logoid = item.d[7];
+        const { data } = await axios.post(url, body, { timeout: 10000 });
+        if(!data || !data.data) return [];
 
+        return data.data.map(item => {
+            const d = item.d;
+            const rawType = d[7];
+            const logoid = d[8];
+            const isEtf = rawType === 'fund' || rawType === 'structured';
+            
             return {
-                id: item.d[0],
-                symbol: item.d[0].split(':')[1], 
-                name: item.d[5],
+                id: d[0],
+                symbol: d[0].split(':')[1], 
+                name: d[5],
                 type: isEtf ? 'etf-us' : 'stock-us',
                 region: 'US',
-                price: item.d[1],
-                change24h: item.d[2],
-                high24: item.d[3],
-                low24: item.d[4],
-                image: getLogoUrl(logoid), // LOGO DÜZELTİLDİ
+                price: d[1] || 0,
+                change24h: d[2] || 0,
+                high24: d[3] || d[1],
+                low24: d[4] || d[1],
+                mcap: d[6] || 0,
+                image: getLogoUrl(logoid),
                 icon: isEtf ? 'layers' : 'google-circles-extended',
                 color: isEtf ? '#E67E22' : '#2980B9'
             };
         });
     } catch (error) {
-        console.error("US Fetch Error:", error.message);
+        console.error("ABD Hatası:", error.message);
         return [];
     }
 }
 
-// --- 4. DÖVİZ VE ALTIN ---
+// --- 3. DÖVİZ VE ALTIN ---
 async function getForexAndGold() {
     try {
         const url = 'https://scanner.tradingview.com/global/scan';
@@ -150,11 +134,12 @@ async function getForexAndGold() {
                 "tickers": ["FX_IDC:USDTRY", "FX_IDC:EURTRY", "TVC:GOLD"],
                 "query": { "types": [] }
             },
-            "columns": ["close", "change|1d", "high|1d", "low|1d"]
+            "columns": ["close", "change", "high", "low"]
         };
 
-        const { data } = await axios.post(url, body, { timeout: 5000 });
-        
+        const { data } = await axios.post(url, body, { timeout: 10000 });
+        if(!data || !data.data) return [];
+
         const findVal = (ticker) => {
             const item = data.data.find(i => i.s === ticker);
             return item ? { price: item.d[0], change: item.d[1], high: item.d[2], low: item.d[3] } : { price:0, change:0 };
@@ -172,36 +157,26 @@ async function getForexAndGold() {
             { id: 'XAU', symbol: 'ONS', name: 'Ons Altın', type: 'gold', price: ons.price, change24h: ons.change, high24: ons.high, low24: ons.low, icon: 'gold', color: '#D4AC0D' }
         ];
     } catch (error) {
-        console.error("Forex Fetch Error:", error.message);
+        console.error("Forex Hatası:", error.message);
         return [];
     }
 }
 
 // --- ENDPOINT ---
 app.get('/api/all', async (req, res) => {
-    console.log("--- API İSTEĞİ GELDİ ---");
-    const start = Date.now();
-
     try {
-        // Hepsini paralel çalıştırıyoruz
-        const [bist, funds, us, global] = await Promise.all([
-            getBistStocks(),
-            getTefasFunds(),
+        const [turkeyAssets, us, global] = await Promise.all([
+            getTurkeyAssets(),
             getUSAssets(),
             getForexAndGold()
         ]);
-
-        const total = bist.length + funds.length + us.length + global.length;
-        console.log(`Veri hazir. Toplam: ${total} oge. Sure: ${Date.now() - start}ms`);
-        
-        res.json([...global, ...us, ...bist, ...funds]);
-
+        res.json([...global, ...turkeyAssets.stocks, ...turkeyAssets.funds, ...us]);
     } catch (error) {
-        console.error("Critical Server Error:", error);
-        res.status(500).json({ error: "Sunucu hatasi" });
+        console.error("Genel Sunucu Hatası:", error);
+        res.status(500).json({ error: "Veri cekilemedi" });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Sunucu ayakta! Port: ${PORT}`);
+    console.log(`Sunucu çalışıyor! Port: ${PORT}`);
 });
