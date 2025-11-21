@@ -7,14 +7,14 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// --- 1. BIST HİSSELERİNİ ÇEKEN FONKSİYON ---
-async function getAllStocks() {
+// --- 1. BIST HİSSELERİ (TÜRKİYE) ---
+async function getBistStocks() {
     try {
         const url = 'https://scanner.tradingview.com/turkey/scan';
         const body = {
             "filter": [
                 { "left": "exchange", "operation": "equal", "right": "BIST" },
-                { "left": "typespecs", "operation": "has", "right": "common" }
+                { "left": "typespecs", "operation": "has", "right": "common" } // Sadece hisseler
             ],
             "options": { "lang": "tr" },
             "symbols": { "query": { "types": [] }, "tickers": [] },
@@ -24,12 +24,12 @@ async function getAllStocks() {
         };
 
         const { data } = await axios.post(url, body);
-
         return data.data.map(item => ({
             id: item.d[0],
             symbol: item.d[0],
             name: item.d[5],
-            type: 'stock',
+            type: 'stock', // Tip: Hisse
+            region: 'TR',
             price: item.d[1],
             change24h: item.d[2],
             high24: item.d[3],
@@ -43,18 +43,90 @@ async function getAllStocks() {
     }
 }
 
-// --- 2. DÖVİZ VE ALTIN ÇEKEN FONKSİYON ---
+// --- 2. TEFAS FONLARI (TÜRKİYE) --- (YENİ)
+async function getTefasFunds() {
+    try {
+        const url = 'https://scanner.tradingview.com/turkey/scan';
+        const body = {
+            "filter": [
+                { "left": "exchange", "operation": "equal", "right": "BIST" },
+                { "left": "type", "operation": "equal", "right": "fund" } // Sadece Fonlar
+            ],
+            "options": { "lang": "tr" },
+            "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description"],
+            "sort": { "sortBy": "total_assets", "sortOrder": "desc" }, // Büyüklüğe göre sırala
+            "range": [0, 200] // En büyük 200 fon
+        };
+
+        const { data } = await axios.post(url, body);
+        return data.data.map(item => ({
+            id: item.d[0],
+            symbol: item.d[0], // Örn: MAC, TCD
+            name: item.d[5], // Örn: MARMARA CAPITAL...
+            type: 'fund', // Tip: Fon
+            region: 'TR',
+            price: item.d[1],
+            change24h: item.d[2],
+            high24: item.d[3],
+            low24: item.d[4],
+            icon: 'chart-pie', // Pasta grafik ikonu
+            color: '#8E44AD' // Mor renk
+        }));
+    } catch (error) {
+        console.error("TEFAS Hatası:", error.message);
+        return [];
+    }
+}
+
+// --- 3. ABD HİSSELERİ VE ETF'ler (AMERİKA) --- (GÜNCELLENDİ)
+async function getUSAssets() {
+    try {
+        const url = 'https://scanner.tradingview.com/america/scan';
+        const body = {
+            "filter": [
+                // Hisse (common) VEYA ETF (fund) olanları getir
+                { "left": "type", "operation": "in_range", "right": ["stock", "fund", "dr"] },
+                { "left": "exchange", "operation": "in_range", "right": ["NASDAQ", "NYSE", "AMEX"] }
+            ],
+            "options": { "lang": "en" },
+            "columns": ["name", "close", "change|1d", "high|1d", "low|1d", "description", "market_cap_basic", "type"],
+            "sort": { "sortBy": "market_cap_basic", "sortOrder": "desc" }, 
+            "range": [0, 250] // Sayıyı artırdık (Hisse + ETF karışık)
+        };
+
+        const { data } = await axios.post(url, body);
+        return data.data.map(item => {
+            // Gelen verinin tipine bakıp ETF mi Hisse mi olduğunu anlayalım
+            const rawType = item.d[7]; // TradingView'den gelen tip
+            const isEtf = rawType === 'fund' || rawType === 'structured';
+            
+            return {
+                id: item.d[0],
+                symbol: item.d[0].split(':')[1], // NASDAQ:AAPL -> AAPL
+                name: item.d[5],
+                type: isEtf ? 'etf-us' : 'stock-us', // Ayrım yapıyoruz
+                region: 'US',
+                price: item.d[1],
+                change24h: item.d[2],
+                high24: item.d[3],
+                low24: item.d[4],
+                icon: isEtf ? 'layers' : 'google-circles-extended',
+                color: isEtf ? '#E67E22' : '#2980B9'
+            };
+        });
+    } catch (error) {
+        console.error("ABD Hatası:", error.message);
+        return [];
+    }
+}
+
+// --- 4. DÖVİZ VE ALTIN ---
 async function getForexAndGold() {
     try {
-        // Global piyasaları tarıyoruz
         const url = 'https://scanner.tradingview.com/global/scan';
         const body = {
             "symbols": {
-                "tickers": [
-                    "FX_IDC:USDTRY",  // Dolar
-                    "FX_IDC:EURTRY",  // Euro
-                    "TVC:GOLD"        // Ons Altın
-                ],
+                "tickers": ["FX_IDC:USDTRY", "FX_IDC:EURTRY", "TVC:GOLD"],
                 "query": { "types": [] }
             },
             "columns": ["close", "change|1d", "high|1d", "low|1d"]
@@ -62,11 +134,6 @@ async function getForexAndGold() {
 
         const { data } = await axios.post(url, body);
         
-        // TradingView'den gelen verileri işleyelim
-        // data.data[0] -> USDTRY
-        // data.data[1] -> EURTRY
-        // data.data[2] -> ONS ALTIN (Sıra değişebilir, o yüzden find ile arayacağız)
-
         const findVal = (ticker) => {
             const item = data.data.find(i => i.s === ticker);
             return item ? { price: item.d[0], change: item.d[1], high: item.d[2], low: item.d[3] } : { price:0, change:0 };
@@ -75,10 +142,7 @@ async function getForexAndGold() {
         const usd = findVal("FX_IDC:USDTRY");
         const eur = findVal("FX_IDC:EURTRY");
         const ons = findVal("TVC:GOLD");
-
-        // Gram Altın Hesabı: (Ons Dolar Fiyatı * Dolar Kuru) / 31.1035
         const gramPrice = (ons.price * usd.price) / 31.1035;
-        // Gram değişimi Ons değişimi ile yaklaşık aynıdır (Basitlik için)
         
         return [
             {
@@ -93,7 +157,7 @@ async function getForexAndGold() {
             },
             {
                 id: 'GA', symbol: 'GRAM', name: 'Gram Altın', type: 'gold',
-                price: gramPrice, change24h: ons.change, high24: gramPrice * 1.01, low24: gramPrice * 0.99, // Gram için high/low tahmini
+                price: gramPrice, change24h: ons.change, high24: gramPrice * 1.01, low24: gramPrice * 0.99,
                 icon: 'gold', color: '#F1C40F'
             },
             {
@@ -102,31 +166,26 @@ async function getForexAndGold() {
                 icon: 'gold', color: '#D4AC0D'
             }
         ];
-
     } catch (error) {
         console.error("Forex Hatası:", error.message);
         return [];
     }
 }
 
-// Endpoint: BIST Hisseleri
-app.get('/api/bist', async (req, res) => {
-    const data = await getAllStocks();
-    res.json(data);
-});
-
-// Endpoint: Döviz ve Altın
-app.get('/api/global', async (req, res) => {
-    const data = await getForexAndGold();
-    res.json(data);
-});
-
-// Endpoint: HEPSİ BİR ARADA (Uygulama için en kolayı bu)
+// --- ENDPOINT: HEPSİ BİR ARADA ---
 app.get('/api/all', async (req, res) => {
-    console.log("Tüm piyasa verileri isteniyor...");
-    const [bist, global] = await Promise.all([getAllStocks(), getForexAndGold()]);
-    // Önce Döviz/Altın, Sonra Hisseler gelsin
-    res.json([...global, ...bist]);
+    console.log("Tüm varlıklar isteniyor...");
+    
+    // Performans için hepsini paralel çekiyoruz
+    const [bist, tefas, us, global] = await Promise.all([
+        getBistStocks(),
+        getTefasFunds(),
+        getUSAssets(),
+        getForexAndGold()
+    ]);
+    
+    // Birleştir ve gönder
+    res.json([...global, ...bist, ...tefas, ...us]);
 });
 
 app.listen(PORT, () => {
